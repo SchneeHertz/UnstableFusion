@@ -25,6 +25,16 @@ from dataclasses import dataclass
 
 SIZE_INCREASE_INCREMENT = 20
 
+
+def smoothen_mask(original_mask):
+    new_mask = (1 - original_mask).copy().astype(np.float32)
+    for i in range(10):
+        K = min(original_mask.shape[0] // 3, 30)
+        new_mask = cv2.blur(new_mask, (K, K))
+        new_mask[original_mask == 1] = 0
+    new_mask = np.clip(new_mask * 2, 0, 1)
+    return 1 - new_mask.astype(np.uint8)
+
 def cv2_telea(img, mask):
     ret = cv2.inpaint(img, 255 - mask, 5, cv2.INPAINT_TELEA)
     return ret, mask
@@ -126,7 +136,10 @@ shortcuts_ = {
     "small_selection": "1",
     "medium_selection": "2",
     "large_selection": "3",
-    "fit_image": "0"
+    "fit_image": "0",
+    "save_mask": "Q",
+    "forget_mask": "Shift+Q",
+    "toggle_paint_using_left_click": "E",
 }
 
 def get_shortcut_dict():
@@ -267,12 +280,6 @@ class StableDiffusionManager:
         self.mode_widget = None
         self.huggingface_token_widget = None
         self.server_address_widget = None
-    
-    def disable_safety(self):
-        if self.cached_local_handler != None:
-            self.cached_local_handler.img2img.safety_checker = dummy_safety_checker
-            self.cached_local_handler.text2img.safety_checker = dummy_safety_checker
-            self.cached_local_handler.inpainter.safety_checker = dummy_safety_checker
 
     def get_local_handler(self, token=True):
         if self.cached_local_handler == None:
@@ -335,71 +342,58 @@ class PaintWidget(QWidget):
 
         self.saved_mask_state = None
 
-        shortcuts = get_shortcut_dict()
-        self.paste_shortcut = QShortcut(QKeySequence(shortcuts['paste_from_scratchpad']), self)
-        self.paste_shortcut.activated.connect(self.handle_paste_scratchpad)
-
-        self.decrease_size_shortcut = QShortcut(QKeySequence(shortcuts['decrease_size']), self)
-        self.decrease_size_shortcut.activated.connect(self.handle_decrease_size_button)
-
-        self.increase_size_shortcut = QShortcut(QKeySequence(shortcuts['increase_size']), self)
-        self.increase_size_shortcut.activated.connect(self.handle_increase_size_button)
-
-        self.export_shortcut = QShortcut(QKeySequence(shortcuts['export']), self)
-        self.export_shortcut.activated.connect(self.handle_export_button)
-
-        self.reimagine_shortcut = QShortcut(QKeySequence(shortcuts['reimagine']), self)
-        self.reimagine_shortcut.activated.connect(self.handle_reimagine_button)
-
-        self.inpaint_shortcut = QShortcut(QKeySequence(shortcuts['inpaint']), self)
-        self.inpaint_shortcut.activated.connect(self.handle_inpaint_button)
-
-        self.generate_shortcut = QShortcut(QKeySequence(shortcuts['generate']), self)
-        self.generate_shortcut.activated.connect(self.handle_generate_button)
-
-        self.select_color_shortcut = QShortcut(QKeySequence(shortcuts['select_color']), self)
-        self.select_color_shortcut.activated.connect(self.handle_select_color_button)
-
-        self.undo_shortcut = QShortcut(QKeySequence(shortcuts['undo']), self)
-        self.redo_shortcut = QShortcut(QKeySequence(shortcuts['redo']), self)
-        self.undo_shortcut.activated.connect(self.update_and(self.undo))
-        self.redo_shortcut.activated.connect(self.update_and(self.redo))
-
-        self.open_shortcut = QShortcut(QKeySequence(shortcuts['open']), self)
-        self.open_shortcut.activated.connect(self.update_and(self.handle_load_image_button))
-
-        self.toggle_scratchpad_shortcut = QShortcut(QKeySequence(shortcuts['toggle_scratchpad']), self)
-        self.toggle_scratchpad_shortcut.activated.connect(self.update_and(self.handle_show_scratchpad))
-
-        self.quicksave_shortcut = QShortcut(QKeySequence(shortcuts['quicksave']), self)
-        self.quicksave_shortcut.activated.connect(self.update_and(self.handle_quicksave_button))
-
-        self.quickload_shortcut = QShortcut(QKeySequence(shortcuts['quickload']), self)
-        self.quickload_shortcut.activated.connect(self.update_and(self.handle_quickload_button))
-
-        self.toggle_preview_shortcut = QShortcut(QKeySequence(shortcuts['toggle_preview']), self)
-        self.toggle_preview_shortcut.activated.connect(self.update_and(self.toggle_should_preview_scratchpad))
-
-        self.autofill_shortcut = QShortcut(QKeySequence(shortcuts['autofill_selection']), self)
-        self.autofill_shortcut.activated.connect(self.update_and(self.handle_autofill))
-
-        self.small_selection_shortcut = QShortcut(QKeySequence(shortcuts['small_selection']), self)
-        self.small_selection_shortcut.activated.connect(self.update_and(self.set_size_small))
-
-        self.medium_selection_shortcut = QShortcut(QKeySequence(shortcuts['medium_selection']), self)
-        self.medium_selection_shortcut.activated.connect(self.update_and(self.set_size_medium))
-
-        self.large_selection_shortcut = QShortcut(QKeySequence(shortcuts['large_selection']), self)
-        self.large_selection_shortcut.activated.connect(self.update_and(self.set_size_large))
-
-        self.max_selection_shortcut = QShortcut(QKeySequence(shortcuts['fit_selection']), self)
-        self.max_selection_shortcut.activated.connect(self.update_and(self.set_size_fit_image))
         
+        self.add_shortcuts()
+
         self.prompt_textarea = prompt_textarea_
         self.modifiers_textarea = modifiers_textarea_
         self.stable_diffusion_manager = stable_diffusion_manager_
         self.preview_image = None
+
+        self.color_pushbutton = None
+        self.paint_checkbox = None
+        self.smooth_inpaint_checkbox = None
+
     
+    def should_inpaint_smoothly(self):
+        if self.smooth_inpaint_checkbox:
+            return self.smooth_inpaint_checkbox.isChecked()
+        else:
+            return False
+
+    def add_shortcuts(self):
+        shortcuts = get_shortcut_dict()
+        shortcut_function_map = {
+            'paste_from_scratchpad': self.handle_paste_scratchpad,
+            'decrease_size': self.handle_decrease_size_button,
+            'increase_size': self.handle_increase_size_button,
+            'export': self.handle_export_button,
+            'reimagine': self.handle_reimagine_button,
+            'inpaint': self.handle_inpaint_button,
+            'generate': self.handle_generate_button,
+            'select_color': self.handle_select_color_button,
+            'undo': self.undo,
+            'redo': self.redo,
+            'open': self.handle_load_image_button,
+            'toggle_scratchpad': self.handle_show_scratchpad,
+            'quicksave': self.handle_quicksave_button,
+            'quickload': self.handle_quickload_button,
+            'toggle_preview': self.toggle_should_preview_scratchpad,
+            'autofill_selection': self.handle_autofill,
+            'small_selection': self.set_size_small,
+            'medium_selection': self.set_size_medium,
+            'large_selection': self.set_size_large,
+            'fit_selection': self.set_size_fit_image,
+            'save_mask': self.handle_save_mask,
+            'forget_mask': self.handle_forget_mask,
+            'toggle_paint_using_left_click': self.toggle_should_swap_buttons,
+        }
+
+        for name, function in shortcut_function_map.items():
+            shortcut = QShortcut(QKeySequence(shortcuts[name]), self)
+            shortcut.activated.connect(self.update_and(function))
+
+
     def inc_window_scale(self):
         self.window_scale *= 1.1
 
@@ -415,8 +409,14 @@ class PaintWidget(QWidget):
     def toggle_should_preview_scratchpad(self):
         self.set_should_preview_scratchpad(not self.should_preview_scratchpad)
 
+    def toggle_should_swap_buttons(self):
+        self.set_should_swap_buttons(not self.shoulds_swap_buttons)
+
     def set_should_swap_buttons(self, val):
         self.shoulds_swap_buttons = val
+
+        if self.paint_checkbox:
+            self.paint_checkbox.setChecked(val)
 
     def get_handler(self):
         return self.stable_diffusion_manager.get_handler()
@@ -462,6 +462,8 @@ class PaintWidget(QWidget):
     
     def set_color(self, new_color):
         self.color = np.array([new_color.red(), new_color.green(), new_color.blue()])
+        if self.color_pushbutton:
+            self.color_pushbutton.setStyleSheet("background-color: rgb(%d, %d, %d)" % (self.color[0], self.color[1], self.color[2]))
 
     def undo(self):
         if len(self.history) > 0:
@@ -619,10 +621,12 @@ class PaintWidget(QWidget):
             else:
                 patch_alpha = np.ones((patch_np.shape[0], patch_np.shape[1])).astype(np.uint8) * 255
 
-            new_image[image_rect.top():image_rect.top() + patch_np.shape[0], image_rect.left():image_rect.left()+patch_np.shape[1], :][patch_alpha > 128] = \
-                np.concatenate(
-                    [patch_np, patch_alpha[:, :, None]],
-                axis=-1)[patch_alpha > 128]
+            index = (slice(image_rect.top(), image_rect.top() + patch_np.shape[0]), slice(image_rect.left(),image_rect.left()+patch_np.shape[1]), slice(None, None, None))
+            new_patch = np.concatenate([patch_np, patch_alpha[:, :, None]], axis=-1)
+
+            new_image[index][patch_alpha > 128] = new_patch[patch_alpha > 128]
+            
+            
             self.set_np_image(new_image)
 
 
@@ -854,6 +858,18 @@ class PaintWidget(QWidget):
 
             # add mask as alpha channel
             # inpainted_image = np.concatenate([inpainted_image, mask[:, :, np.newaxis]], axis=2)
+
+            if self.should_inpaint_smoothly():
+                patch_alpha = mask.astype(np.float32) / 255
+                patch_alpha[:, 0] = 0
+                patch_alpha[:, -1] = 0
+                patch_alpha[0, :] = 0
+                patch_alpha[-1, :] = 0
+
+                patch_alpha = smoothen_mask(patch_alpha)
+                patch_alpha = np.stack([patch_alpha] * 3, axis=2)
+                inpainted_image = (inpainted_image * patch_alpha + image * (1-patch_alpha)).astype(np.uint8)
+
             self.set_selection_image(inpainted_image)
             self.update()
         except:
@@ -923,6 +939,14 @@ class PaintWidget(QWidget):
     
     def handle_seed_change(self, new_seed):
         self.seed = new_seed
+
+    def handle_save_mask(self):
+        self.save_mask()
+        self.update()
+
+    def handle_forget_mask(self):
+        self.reset_saved_mask()
+        self.update()
 
     def get_prompt(self):
         return self.prompt_textarea.text() + ", " + self.modifiers_textarea.text()
@@ -1265,9 +1289,11 @@ if __name__ == '__main__':
         inpaint_options,
         select_callback=inpaint_change_callback)
 
+    smooth_inpaint_checkbox = QCheckBox('Smooth Inpaint')
     inpaint_container = QWidget()
     inpaint_layout = QHBoxLayout()
     inpaint_layout.addWidget(inpaint_selector_container)
+    inpaint_layout.addWidget(smooth_inpaint_checkbox)
     inpaint_layout.addWidget(inpaint_button)
     inpaint_container.setLayout(inpaint_layout)
 
@@ -1346,7 +1372,6 @@ if __name__ == '__main__':
     box_size_limit_checkbox.stateChanged.connect(box_size_limit_callback)
     swap_buttons_checkbox.stateChanged.connect(swap_buttons_callback)
 
-    disable_safety_button = QPushButton('Disable Safety Checker')
     
     def handle_autofill():
         widget.handle_autofill()
@@ -1354,22 +1379,12 @@ if __name__ == '__main__':
     fill_button = QPushButton('Autofill')
     fill_button.clicked.connect(handle_autofill)
 
-    def handle_save_mask_button():
-        widget.save_mask()
-        widget.update()
-
-    def handle_forget_mask_button():
-        widget.reset_saved_mask()
-        widget.update()
-
     mask_control_container = QWidget()
     mask_control_layout = QHBoxLayout()
 
     mask_container_label = QLabel('Advanced Inpainting Mask')
     save_mask_button = QPushButton('Save Mask')
-    save_mask_button.clicked.connect(handle_save_mask_button)
     forget_mask_button = QPushButton('Forget Mask')
-    forget_mask_button.clicked.connect(handle_forget_mask_button)
     mask_control_layout.addWidget(mask_container_label)
     mask_control_layout.addWidget(save_mask_button)
     mask_control_layout.addWidget(forget_mask_button)
@@ -1407,14 +1422,11 @@ if __name__ == '__main__':
     tools_layout.addWidget(run_groupbox)
     tools_layout.addWidget(save_groupbox)
     tools_layout.addWidget(scratchpad_container)
-    # tools_layout.addWidget(disable_safety_button)
     tools_layout.addWidget(support_container)
     tools_widget.setLayout(tools_layout)
 
     scroll_area.setWidget(tools_widget)
 
-    def handle_disable_safety():
-        stbale_diffusion_manager.disable_safety()
 
     load_image_button.clicked.connect(lambda : widget.handle_load_image_button())
     erase_button.clicked.connect(lambda : widget.handle_erase_button())
@@ -1435,7 +1447,12 @@ if __name__ == '__main__':
     coffee_button.clicked.connect(lambda : handle_coffee_button())
     twitter_button.clicked.connect(lambda : handle_twitter_button())
     github_button.clicked.connect(lambda : handle_github_button())
-    disable_safety_button.clicked.connect(lambda : handle_disable_safety())
+    save_mask_button.clicked.connect(lambda : widget.handle_save_mask())
+    forget_mask_button.clicked.connect(lambda : widget.handle_forget_mask())
+
+    widget.color_pushbutton = select_color_button
+    widget.paint_checkbox = swap_buttons_checkbox
+    widget.smooth_inpaint_checkbox = smooth_inpaint_checkbox
 
     def seed_change_function(val):
         try:
