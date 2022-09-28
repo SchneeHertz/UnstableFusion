@@ -1,3 +1,52 @@
+# UnstableFusion-Waifu
+## Fork Information
+This repository is forked from [ahrm/UnstableFusion](https://github.com/ahrm/UnstableFusion), and modify for use [hakurei/waifu-diffusion](https://huggingface.co/hakurei/waifu-diffusion) model.
+
+## Additional running instructions using colab servers
+1. Install Python
+
+2. Create venv, open terminal and run
+
+```
+python -m venv UnstableFusion-Waifu
+```
+
+3. Download Zip of this repository or use git clone
+
+4. Copy the file of this repository to the path of UnstableFusion-Waifu
+
+5. Cd to the path of UnstableFusion-Waifu, run
+
+```
+./script/activate
+pip install -r requirements.txt
+```
+
+6. Run
+
+```
+python unstablefusion.py
+```
+
+7. Create a huggingface account and an [access token](https://huggingface.co/settings/tokens), if you haven't done so already.
+Request access to the StableDiffusion model at [hakurei/waifu-diffusion](https://huggingface.co/hakurei/waifu-diffusion).
+
+8. Open [this notebook](https://colab.research.google.com/drive/1fHQkzZh9id6QuNujjgeEKAWKmzDA7s6A?usp=sharing) and run it (you need to enter your huggingface token when asked).
+
+9. When you run the last cell, you will be given a url like this:
+
+![colab_output - Copy](https://user-images.githubusercontent.com/6392321/191857962-0601fa88-7f03-46cf-98a0-c38cb3fd25b9.png)
+copy this URL.
+
+10. In the runtime section, select server and enter the address you copied in the server field. Like this:
+
+![using_server - Copy](https://user-images.githubusercontent.com/6392321/191858215-9db78f1a-50f8-4394-8bd4-fc14d981561b.png)
+
+11. The next time you run this program, just do steps 5,6,8,9,10 and skip the step to install the requirements
+
+
+# Original README
+
 # UnstableFusion
 A Stable Diffusion desktop frontend with inpainting, img2img and more!
 

@@ -1030,7 +1030,7 @@ def handle_huggingface_button():
     QDesktopServices.openUrl(QUrl('https://huggingface.co/settings/tokens'))
 
 def handle_colab_button():
-    QDesktopServices.openUrl(QUrl('https://colab.research.google.com/github/ahrm/UnstableFusion/blob/main/UnstableFusionServer.ipynb'))
+    QDesktopServices.openUrl(QUrl('https://colab.research.google.com/drive/1fHQkzZh9id6QuNujjgeEKAWKmzDA7s6A?usp=sharing'))
 
 class PromptLineEdit(QLineEdit):
 
