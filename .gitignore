@@ -3,3 +3,6 @@ __pycache__/*
 custom_pipeline/__pycache__/*
 modifiers.txt
 
+Lib/
+Scripts/
+pyvenv.cfg
