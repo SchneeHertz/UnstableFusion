@@ -140,6 +140,7 @@ shortcuts_ = {
     "save_mask": "Q",
     "forget_mask": "Shift+Q",
     "toggle_paint_using_left_click": "E",
+    "pick_color": "Shift+C",
 }
 
 def get_shortcut_dict():
@@ -341,6 +342,7 @@ class PaintWidget(QWidget):
         self.shoulds_swap_buttons = False
 
         self.saved_mask_state = None
+        self.brush = 'square'
 
         
         self.add_shortcuts()
@@ -355,6 +357,15 @@ class PaintWidget(QWidget):
         self.smooth_inpaint_checkbox = None
 
     
+    def handle_pick_color(self):
+        image = self.get_selection_np_image()
+        if not (image is None):
+            mean_color_np = image.mean(axis=(0, 1))
+            mean_color = QColor(mean_color_np[0], mean_color_np[1], mean_color_np[2])
+        else:
+            QColor(0, 0, 0)
+        self.set_color(mean_color)
+
     def should_inpaint_smoothly(self):
         if self.smooth_inpaint_checkbox:
             return self.smooth_inpaint_checkbox.isChecked()
@@ -387,6 +398,7 @@ class PaintWidget(QWidget):
             'save_mask': self.handle_save_mask,
             'forget_mask': self.handle_forget_mask,
             'toggle_paint_using_left_click': self.toggle_should_swap_buttons,
+            'pick_color': self.handle_pick_color,
         }
 
         for name, function in shortcut_function_map.items():
@@ -501,10 +513,13 @@ class PaintWidget(QWidget):
         if self.is_dragging:
             self.selection_rectangle.moveCenter(self.window_to_image_point(e.pos()))
 
-            if e.buttons() & right_button:
-                self.erase_selection(False)
-            if e.buttons() & mid_button:
-                self.paint_selection(False)
+            try:
+                if e.buttons() & right_button:
+                    self.erase_selection(False)
+                if e.buttons() & mid_button:
+                    self.paint_selection(False)
+            except ValueError:
+                pass
 
             self.update()
             if self.owner != None:
@@ -597,16 +612,44 @@ class PaintWidget(QWidget):
             new_image = self.np_image.copy()
             new_image[image_rect.top():image_rect.bottom(), image_rect.left():image_rect.right(), :3] = self.color
             new_image[image_rect.top():image_rect.bottom(), image_rect.left():image_rect.right(), 3] = 255
+            brush = self.get_brush()
+            if not brush is None:
+                index = (slice(image_rect.top(), image_rect.bottom()), slice(image_rect.left(), image_rect.right()), slice(0, 4))
+                mask = np.stack([brush, brush, brush, brush], axis=2)
+                mask_index = (slice(source_rect.top(), source_rect.bottom()), slice(source_rect.left(), source_rect.right()), slice(0, 4))
+                new_image[index] = mask * self.np_image[index] + (1 - mask) * new_image[index]
+                # new_image[index] = self.np_image[index]
             self.set_np_image(new_image, add_to_history=add_to_history)
+
+    def get_brush(self):
+        image_rect, source_rect = self.crop_image_rect(self.clone_rect(self.selection_rectangle))
+        width = self.selection_rectangle.width()-1
+        height = self.selection_rectangle.height()-1
+        index = (slice(source_rect.top(), source_rect.bottom()), slice(source_rect.left(), source_rect.right()))
+
+        if self.brush == 'circle':
+            brush = np.ones((width, height))
+            cv2.circle(brush, (width//2, height//2), width//2, 0, -1)
+            return brush[index]
+        if self.brush == 'square':
+            return np.zeros((width, height))[index]
+
 
     def erase_selection(self, add_to_history=True):
         if self.selection_rectangle != None:
             image_rect = self.clone_rect(self.selection_rectangle)
             image_rect, source_rect = self.crop_image_rect(image_rect)
             new_image = self.np_image.copy()
-            new_image[image_rect.top():image_rect.bottom(), image_rect.left():image_rect.right(), :] = 0
-            self.set_np_image(new_image, add_to_history=add_to_history)
+            brush = self.get_brush()
+            if brush is None:
+                new_image[image_rect.top():image_rect.bottom(), image_rect.left():image_rect.right(), :] = 0
+                self.set_np_image(new_image, add_to_history=add_to_history)
+            else:
+                mask = np.stack([brush, brush, brush, brush], axis=2)
+                new_image[image_rect.top():image_rect.bottom(), image_rect.left():image_rect.right(), :] = (new_image[image_rect.top():image_rect.bottom(), image_rect.left():image_rect.right(), :] * mask).astype(np.uint8)
+                self.set_np_image(new_image, add_to_history=add_to_history)
     
+
     def set_selection_image(self, patch_image):
         if self.selection_rectangle != None:
             image_rect = self.clone_rect(self.selection_rectangle)
@@ -929,7 +972,7 @@ class PaintWidget(QWidget):
                 self.scratchpad.show()
 
     def handle_paste_scratchpad(self):
-        if not (self.scratchpad.np_image is None):
+        if not (self.scratchpad.np_image is None) and not (self.scratchpad.selection_rectangle is None):
             resized = np.array(
                 Image.fromarray(
                     self.scratchpad.get_selection_np_image()).resize(
@@ -1148,8 +1191,10 @@ if __name__ == '__main__':
     paint_widgets_layout = QHBoxLayout()
     paint_button = QPushButton('Paint')
     select_color_button = QPushButton('Select Color')
+    pick_color_button = QPushButton('Pick Color')
     paint_widgets_layout.addWidget(erase_button)
     paint_widgets_layout.addWidget(paint_button)
+    paint_widgets_layout.addWidget(pick_color_button)
     paint_widgets_layout.addWidget(select_color_button)
     paint_widgets_container.setLayout(paint_widgets_layout)
 
@@ -1338,6 +1383,13 @@ if __name__ == '__main__':
 
     server_address_widget.setText('http://127.0.0.1:5000')
 
+    brush_options = ['square', 'circle']
+    def brush_select_callback(num):
+        option = brush_options[num]
+        widget.brush = option
+        scratchpad.brush = option
+
+
     box_size_limit_container = QWidget()
     box_size_limit_label = QLabel('Should limit box size')
     box_size_limit_checkbox = QCheckBox()
@@ -1345,11 +1397,13 @@ if __name__ == '__main__':
     box_size_limit_layout = QHBoxLayout()
     swap_buttons_label = QLabel('Paint using left click')
     swap_buttons_checkbox = QCheckBox()
+    brush_select_widget, _  = create_select_widget('Brush', brush_options, brush_select_callback)
     swap_buttons_checkbox.setChecked(False)
     box_size_limit_layout.addWidget(box_size_limit_label)
     box_size_limit_layout.addWidget(box_size_limit_checkbox)
     box_size_limit_layout.addWidget(swap_buttons_label)
     box_size_limit_layout.addWidget(swap_buttons_checkbox)
+    box_size_limit_layout.addWidget(brush_select_widget)
 
     box_size_limit_container.setLayout(box_size_limit_layout)
 
@@ -1438,6 +1492,7 @@ if __name__ == '__main__':
     quickload_button.clicked.connect(lambda : widget.handle_quickload_button())
     export_button.clicked.connect(lambda : widget.handle_export_button())
     select_color_button.clicked.connect(lambda : widget.handle_select_color_button( select_color_button))
+    pick_color_button.clicked.connect(lambda : widget.handle_pick_color())
     paint_button.clicked.connect(lambda : widget.handle_paint_button())
     increase_size_button.clicked.connect(lambda : widget.handle_increase_size_button())
     decrease_size_button.clicked.connect(lambda : widget.handle_decrease_size_button())
