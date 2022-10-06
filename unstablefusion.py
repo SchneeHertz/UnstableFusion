@@ -24,7 +24,62 @@ import random
 from dataclasses import dataclass
 
 SIZE_INCREASE_INCREMENT = 20
+brush_options = ['square', 'circle']
 
+inpaint_options = ['cv2_ns',
+         'cv2_telea',
+         'gaussian']
+        
+def cv2_telea(img, mask):
+    ret = cv2.inpaint(img, 255 - mask, 5, cv2.INPAINT_TELEA)
+    return ret, mask
+
+
+def cv2_ns(img, mask):
+    ret = cv2.inpaint(img, 255 - mask, 5, cv2.INPAINT_NS)
+    return ret, mask
+
+def gaussian_noise(img, mask):
+    noise = np.random.randn(mask.shape[0], mask.shape[1], 3)
+    noise = (noise + 1) / 2 * 255
+    noise = noise.astype(np.uint8)
+    nmask = mask.copy()
+    nmask[mask > 0] = 1
+    img = nmask[:, :, np.newaxis] * img + (1 - nmask[:, :, np.newaxis]) * noise
+    return img, mask
+
+inpaint_functions = {
+    'cv2_ns': cv2_ns,
+    'cv2_telea': cv2_telea,
+    'gaussian': gaussian_noise
+}
+
+shortcuts_ = {
+    'undo': 'Ctrl+Z',
+    'redo': 'Ctrl+Shift+Z',
+    'open': 'O',
+    'toggle_scratchpad': 'S',
+    'quicksave': 'F5',
+    'quickload': 'F9',
+    'select_color': 'C',
+    'generate': 'Return',
+    'inpaint': 'Space',
+    'reimagine': 'R',
+    'export': 'Ctrl+S',
+    'increase_size': '+',
+    'decrease_size': '-',
+    'paste_from_scratchpad': 'p',
+    'toggle_preview': 'T',
+    'autofill_selection': 'F',
+    "small_selection": "1",
+    "medium_selection": "2",
+    "large_selection": "3",
+    "fit_image": "0",
+    "save_mask": "Q",
+    "forget_mask": "Shift+Q",
+    "toggle_paint_using_left_click": "E",
+    "pick_color": "Shift+C",
+}
 
 def smoothen_mask(original_mask):
     new_mask = (1 - original_mask).copy().astype(np.float32)
@@ -35,14 +90,6 @@ def smoothen_mask(original_mask):
     new_mask = np.clip(new_mask * 2, 0, 1)
     return 1 - new_mask.astype(np.uint8)
 
-def cv2_telea(img, mask):
-    ret = cv2.inpaint(img, 255 - mask, 5, cv2.INPAINT_TELEA)
-    return ret, mask
-
-
-def cv2_ns(img, mask):
-    ret = cv2.inpaint(img, 255 - mask, 5, cv2.INPAINT_NS)
-    return ret, mask
 
 def get_quicksave_path():
     parent_path = pathlib.Path(__file__).parents[0]
@@ -88,7 +135,6 @@ def get_most_recent_saved_file():
             most_recent = mtime
             most_recent_path = path
     return most_recent_path
-        
 
 def quicksave_image(np_image, file_path=None):
     if file_path == None:
@@ -96,52 +142,6 @@ def quicksave_image(np_image, file_path=None):
 
     Image.fromarray(np_image).save(file_path)
     return file_path
-
-def gaussian_noise(img, mask):
-    noise = np.random.randn(mask.shape[0], mask.shape[1], 3)
-    noise = (noise + 1) / 2 * 255
-    noise = noise.astype(np.uint8)
-    nmask = mask.copy()
-    nmask[mask > 0] = 1
-    img = nmask[:, :, np.newaxis] * img + (1 - nmask[:, :, np.newaxis]) * noise
-    return img, mask
-
-inpaint_options = ['cv2_ns',
-         'cv2_telea',
-         'gaussian']
-        
-inpaint_functions = {
-    'cv2_ns': cv2_ns,
-    'cv2_telea': cv2_telea,
-    'gaussian': gaussian_noise
-}
-
-shortcuts_ = {
-    'undo': 'Ctrl+Z',
-    'redo': 'Ctrl+Shift+Z',
-    'open': 'O',
-    'toggle_scratchpad': 'S',
-    'quicksave': 'F5',
-    'quickload': 'F9',
-    'select_color': 'C',
-    'generate': 'Return',
-    'inpaint': 'Space',
-    'reimagine': 'R',
-    'export': 'Ctrl+S',
-    'increase_size': '+',
-    'decrease_size': '-',
-    'paste_from_scratchpad': 'p',
-    'toggle_preview': 'T',
-    'autofill_selection': 'F',
-    "small_selection": "1",
-    "medium_selection": "2",
-    "large_selection": "3",
-    "fit_image": "0",
-    "save_mask": "Q",
-    "forget_mask": "Shift+Q",
-    "toggle_paint_using_left_click": "E",
-    "pick_color": "Shift+C",
-}
 
 def get_shortcut_dict():
     parent_path = pathlib.Path(__file__).parents[0]
@@ -159,8 +159,21 @@ def get_texture():
     Z = np.zeros((SIZE, SIZE), dtype=np.uint8)
     return np.stack([Z, Z, Z, Z], axis=2)
 
+def hbox(*args):
 
-testtexture = get_texture()
+    container = QWidget()
+    layout = QHBoxLayout()
+    
+    for arg in args:
+        if type(arg) == tuple:
+            label = QLabel(arg[0])
+            layout.addWidget(label)
+            layout.addWidget(arg[1])
+        else:
+            layout.addWidget(arg)
+    
+    container.setLayout(layout)
+    return container
 
 def qimage_from_array(arr):
     maximum = arr.max()
@@ -171,8 +184,6 @@ def qimage_from_array(arr):
         return  QImage((arr.astype('uint8') * 255).data, arr.shape[1], arr.shape[0], QImage.Format_RGBA8888)
     else:
         return  QImage(arr.astype('uint8').data, arr.shape[1], arr.shape[0], QImage.Format_RGBA8888)
-
-testimage = qimage_from_array(testtexture)
 
 class DummyStableDiffusionHandler:
 
@@ -320,50 +331,37 @@ class PaintWidget(QWidget):
         self.is_dragging = False
         self.image_rect = None
         self.window_scale = 1
-
         self.strength = 0.75
         self.steps = 50
         self.guidance_scale = 7.5
         self.seed = -1
-
         self.should_preview_scratchpad = False
-
         self.inpaint_method = inpaint_options[0]
-
         self.history = []
         self.future = []
         self.color = np.array([0, 0, 0])
-
-        self.setAcceptDrops(True)
         self.scratchpad = None
         self.owner = None
-
         self.should_limit_box_size = True
         self.shoulds_swap_buttons = False
-
         self.saved_mask_state = None
         self.brush = 'square'
-
-        
-        self.add_shortcuts()
-
         self.prompt_textarea = prompt_textarea_
         self.modifiers_textarea = modifiers_textarea_
         self.stable_diffusion_manager = stable_diffusion_manager_
         self.preview_image = None
-
         self.color_pushbutton = None
         self.paint_checkbox = None
         self.smooth_inpaint_checkbox = None
 
+        self.setAcceptDrops(True)
+        self.add_shortcuts()
+
     
     def handle_pick_color(self):
         image = self.get_selection_np_image()
-        if not (image is None):
-            mean_color_np = image.mean(axis=(0, 1))
-            mean_color = QColor(mean_color_np[0], mean_color_np[1], mean_color_np[2])
-        else:
-            QColor(0, 0, 0)
+        mean_color_np = image.mean(axis=(0, 1))
+        mean_color = QColor(mean_color_np[0], mean_color_np[1], mean_color_np[2])
         self.set_color(mean_color)
 
     def should_inpaint_smoothly(self):
@@ -532,16 +530,18 @@ class PaintWidget(QWidget):
     def update_selection_rectangle(self):
         if self.selection_rectangle != None:
             center = self.selection_rectangle.center()
-            self.selection_rectangle = QRect(int(center.x() - self.selection_rectangle_size[0] / 2), int(center.y(
-            ) - self.selection_rectangle_size[1] / 2), int(self.selection_rectangle_size[0]), int(self.selection_rectangle_size[1]))
+            center = QPoint(center.x()+1, center.y()+1)
+            x_offset = self.selection_rectangle_size[0] - self.selection_rectangle_size[0] // 2
+            y_offset = self.selection_rectangle_size[1] - self.selection_rectangle_size[1] // 2
+
+            self.selection_rectangle = QRect(int(center.x() - x_offset), int(center.y(
+            ) - y_offset), int(self.selection_rectangle_size[0]), int(self.selection_rectangle_size[1]))
 
     def wheelEvent(self, e):
         delta = 1
         if e.angleDelta().y() < 0:
             delta = -1
-        delta *= max(1, self.selection_rectangle_size[0] / 10)
-
-        self.selection_rectangle_size = [self.selection_rectangle_size[0] + delta, self.selection_rectangle_size[1] + delta]
+        delta *= max(1, int(self.selection_rectangle_size[0] / 10))
 
         if QApplication.keyboardModifiers() & Qt.ControlModifier:
             if delta > 0:
@@ -552,6 +552,7 @@ class PaintWidget(QWidget):
             self.update()
             return
 
+        self.selection_rectangle_size = [self.selection_rectangle_size[0] + delta, self.selection_rectangle_size[1] + delta]
         if self.selection_rectangle_size[0] <= 0:
             self.selection_rectangle_size[0] = 1
         if self.selection_rectangle_size[1] <= 0:
@@ -605,27 +606,33 @@ class PaintWidget(QWidget):
             image_rect.setBottom(self.qt_image.height())
         return image_rect, source_rect
 
+    def get_selection_index(self):
+        image_rect = self.clone_rect(self.selection_rectangle)
+        image_rect, source_rect = self.crop_image_rect(image_rect)
+        return (slice(image_rect.top(), image_rect.bottom()), slice(image_rect.left(), image_rect.right())),\
+                (slice(source_rect.top(), source_rect.bottom()), slice(source_rect.left(), source_rect.right()))
+
     def paint_selection(self, add_to_history=True):
         if self.selection_rectangle != None:
-            image_rect = self.clone_rect(self.selection_rectangle)
-            image_rect, source_rect = self.crop_image_rect(image_rect)
+            image_index, _ = self.get_selection_index()
+
             new_image = self.np_image.copy()
-            new_image[image_rect.top():image_rect.bottom(), image_rect.left():image_rect.right(), :3] = self.color
-            new_image[image_rect.top():image_rect.bottom(), image_rect.left():image_rect.right(), 3] = 255
+            new_image[(*image_index, slice(None, 3))] = self.color
+            new_image[(*image_index, 3)] = 255
             brush = self.get_brush()
+
             if not brush is None:
-                index = (slice(image_rect.top(), image_rect.bottom()), slice(image_rect.left(), image_rect.right()), slice(0, 4))
+                index = (*image_index, slice(0, 4))
                 mask = np.stack([brush, brush, brush, brush], axis=2)
-                mask_index = (slice(source_rect.top(), source_rect.bottom()), slice(source_rect.left(), source_rect.right()), slice(0, 4))
                 new_image[index] = mask * self.np_image[index] + (1 - mask) * new_image[index]
-                # new_image[index] = self.np_image[index]
+
             self.set_np_image(new_image, add_to_history=add_to_history)
 
     def get_brush(self):
-        image_rect, source_rect = self.crop_image_rect(self.clone_rect(self.selection_rectangle))
+        _, index = self.get_selection_index()
+
         width = self.selection_rectangle.width()-1
         height = self.selection_rectangle.height()-1
-        index = (slice(source_rect.top(), source_rect.bottom()), slice(source_rect.left(), source_rect.right()))
 
         if self.brush == 'circle':
             brush = np.ones((width, height))
@@ -637,56 +644,39 @@ class PaintWidget(QWidget):
 
     def erase_selection(self, add_to_history=True):
         if self.selection_rectangle != None:
-            image_rect = self.clone_rect(self.selection_rectangle)
-            image_rect, source_rect = self.crop_image_rect(image_rect)
+            image_index, _ = self.get_selection_index()
+            index = (*image_index, slice(None, None))
+
             new_image = self.np_image.copy()
             brush = self.get_brush()
-            if brush is None:
-                new_image[image_rect.top():image_rect.bottom(), image_rect.left():image_rect.right(), :] = 0
-                self.set_np_image(new_image, add_to_history=add_to_history)
-            else:
-                mask = np.stack([brush, brush, brush, brush], axis=2)
-                new_image[image_rect.top():image_rect.bottom(), image_rect.left():image_rect.right(), :] = (new_image[image_rect.top():image_rect.bottom(), image_rect.left():image_rect.right(), :] * mask).astype(np.uint8)
-                self.set_np_image(new_image, add_to_history=add_to_history)
+
+            mask = np.stack([brush, brush, brush, brush], axis=2)
+            new_image[index] = (new_image[index] * mask).astype(np.uint8)
+            self.set_np_image(new_image, add_to_history=add_to_history)
     
 
     def set_selection_image(self, patch_image):
         if self.selection_rectangle != None:
-            image_rect = self.clone_rect(self.selection_rectangle)
-            image_rect, source_rect = self.crop_image_rect(image_rect)
+            image_index, source_index = self.get_selection_index()
             new_image = self.np_image.copy()
-            target_width = image_rect.width()
-            target_height = image_rect.height()
-            patch_np = np.array(patch_image)[source_rect.top():source_rect.bottom(), source_rect.left():source_rect.right(), :][:target_height, :target_width, :]
+
+            patch_np = np.array(patch_image)[(*source_index, slice(None, None))]
+
             if patch_np.shape[-1] == 4:
                 patch_np, patch_alpha = patch_np[:, :, :3], patch_np[:, :, 3]
                 patch_alpha = (patch_alpha > 128) * 255
             else:
                 patch_alpha = np.ones((patch_np.shape[0], patch_np.shape[1])).astype(np.uint8) * 255
 
-            index = (slice(image_rect.top(), image_rect.top() + patch_np.shape[0]), slice(image_rect.left(),image_rect.left()+patch_np.shape[1]), slice(None, None, None))
+            index = (*image_index, slice(None, None))
             new_patch = np.concatenate([patch_np, patch_alpha[:, :, None]], axis=-1)
-
             new_image[index][patch_alpha > 128] = new_patch[patch_alpha > 128]
-            
-            
             self.set_np_image(new_image)
 
-
     def get_selection_np_image(self):
-
-        image_rect = self.clone_rect(self.selection_rectangle)
-        image_rect, source_rect = self.crop_image_rect(image_rect)
         result = np.zeros((self.selection_rectangle.height(), self.selection_rectangle.width(), 4), dtype=np.uint8)
-
-        if image_rect.width() != source_rect.width():
-            source_rect.setRight(source_rect.right()-1)
-
-        if image_rect.height() != source_rect.height():
-            source_rect.setBottom(source_rect.bottom()-1)
-
-        result[source_rect.top():source_rect.bottom(), source_rect.left():source_rect.right(), :] = \
-            self.np_image[image_rect.top():image_rect.bottom(), image_rect.left():image_rect.right(), :]
+        image_index, source_index = self.get_selection_index()
+        result[(*source_index, slice(None, None))] = self.np_image[(*image_index, slice(None, None))]
         return result
 
     def set_size_small(self):
@@ -745,15 +735,10 @@ class PaintWidget(QWidget):
         if button == Qt.MidButton:
             self.paint_selection()
             self.is_dragging = True
-            # self.selection_rectangle_size = (256, 256)
-            # self.update_selection_rectangle()
 
         self.update()
 
     def window_to_image_point(self, point: QPoint):
-        # new_x = (point.x() - self.width()/2 ) / self.window_scale + self.np_image.shape[1]
-        # new_y = (point.y() - self.height()/2 ) / self.window_scale + self.np_image.shape[0]
-
         new_x = (point.x() - self.width()/2 + self.np_image.shape[1] * self.window_scale / 2 ) / self.window_scale
         new_y = (point.y() - self.height()/2 + self.np_image.shape[0] * self.window_scale / 2) / self.window_scale
         return QPoint(int(new_x), int(new_y))
@@ -766,25 +751,30 @@ class PaintWidget(QWidget):
     def image_to_window_rect(self, rect):
         return QRect(self.image_to_window_point(rect.topLeft()), self.image_to_window_point(rect.bottomRight()))
 
+    def draw_checkerboard_pattern(self, painter):
+        w = self.width()
+        h = self.height()
+        painter.fillRect(QRect(0, 0, w, h), QBrush(Qt.white))
+        size = 16
+        Nx = w // size
+        Ny = h // size
+
+        for i in range(Nx):
+            for j in range(Ny):
+                if (i+j) % 2 == 0:
+                    rect = QRect((i * w) // Nx, (j * h) // Ny, w // Nx, h // Ny)
+                    painter.fillRect(rect, QBrush(QColor(220, 220, 220)))
+
+
     def paintEvent(self, e):
         painter = QPainter(self)
 
-        checkerboard_brush = QBrush()
-        checkerboard_brush.setColor(QColor('gray'))
-        checkerboard_brush.setStyle(Qt.Dense5Pattern)
+        self.draw_checkerboard_pattern(painter)
 
         if self.qt_image != None:
             w, h = self.qt_image.width(), self.qt_image.height()
-            window_width = self.width()
-            window_height = self.height()
-            offset_x = (window_width - w) / 2
-            offset_y = (window_height - h) / 2
-            # self.image_rect = QRect(int(offset_x), int(offset_y), int(w), int(h))
-            self.image_rect = QRect(0, 0, int(w), int(h))
-            prev_brush = painter.brush()
-            painter.fillRect(self.image_to_window_rect(self.image_rect), checkerboard_brush)
-            painter.setBrush(prev_brush)
-            painter.drawImage(self.image_to_window_rect(self.image_rect), self.qt_image)
+            image_rect = QRect(0, 0, int(w), int(h))
+            painter.drawImage(self.image_to_window_rect(image_rect), self.qt_image)
 
 
         if self.selection_rectangle != None:
@@ -1168,72 +1158,41 @@ if __name__ == '__main__':
     run_groupbox_layout = QVBoxLayout()
     save_groupbox_layout = QVBoxLayout()
 
-    huggingface_token_container = QWidget()
-    huggingface_token_layout = QHBoxLayout()
-    huggingface_token_label = QLabel('Huggingface Token')
-    huggingface_token_text_field = QLineEdit()
-    huggingface_token_open_button = QPushButton('Open Token Page')
-    huggingface_token_layout.addWidget(huggingface_token_label)
-    huggingface_token_layout.addWidget(huggingface_token_text_field)
-    huggingface_token_layout.addWidget(huggingface_token_open_button)
-    huggingface_token_container.setLayout(huggingface_token_layout)
-
-    huggingface_token_text_field.setEchoMode(QLineEdit.Password)
-
-    huggingface_token_open_button.clicked.connect(handle_huggingface_button)
-
-
     tools_widget = QWidget()
     tools_layout = QVBoxLayout()
+
+    huggingface_token_text_field = QLineEdit()
+    huggingface_token_text_field.setEchoMode(QLineEdit.Password)
+    huggingface_token_open_button = QPushButton('Open Token Page')
+    huggingface_token_container = hbox(('Huggingface Token', huggingface_token_text_field), huggingface_token_open_button)
+
     load_image_button = QPushButton('Load Image')
+
+    increase_size_button = QPushButton('Increase Size')
+    decrease_size_button = QPushButton('Decrease Size')
+    increase_size_container = hbox(increase_size_button, decrease_size_button)
+
     erase_button = QPushButton('Erase')
-    paint_widgets_container = QWidget()
-    paint_widgets_layout = QHBoxLayout()
     paint_button = QPushButton('Paint')
     select_color_button = QPushButton('Select Color')
     pick_color_button = QPushButton('Pick Color')
-    paint_widgets_layout.addWidget(erase_button)
-    paint_widgets_layout.addWidget(paint_button)
-    paint_widgets_layout.addWidget(pick_color_button)
-    paint_widgets_layout.addWidget(select_color_button)
-    paint_widgets_container.setLayout(paint_widgets_layout)
+    paint_widgets_container = hbox(erase_button, paint_button, pick_color_button, select_color_button)
 
-    increase_size_container = QWidget()
-    increase_size_layout = QHBoxLayout()
-    increase_size_button = QPushButton('Increase Size')
-    decrease_size_button = QPushButton('Decrease Size')
-    increase_size_layout.addWidget(increase_size_button)
-    increase_size_layout.addWidget(decrease_size_button)
-    increase_size_container.setLayout(increase_size_layout)
-
-    seed_container = QWidget()
-    seed_layout = QHBoxLayout()
-    seed_text = QLineEdit()
-    seed_label = QLabel('Seed')
-    seed_text.setText('-1')
-    seed_random_button = QPushButton('🎲')
-    seed_reset_button = QPushButton('↺')
-    seed_layout.addWidget(seed_label)
-    seed_layout.addWidget(seed_text)
-    seed_layout.addWidget(seed_random_button)
-    seed_layout.addWidget(seed_reset_button)
-    seed_container.setLayout(seed_layout)
-
-    def random_seed_buton_handler():
-        seed_text.setText(str(random.randint(0, 1000000)))
-
-    seed_random_button.clicked.connect(random_seed_buton_handler)
-
-    undo_redo_container = QWidget()
-    undo_redo_layout = QHBoxLayout()
     undo_button = QPushButton('Undo')
     redo_button = QPushButton('Redo')
-    undo_redo_layout.addWidget(undo_button)
-    undo_redo_layout.addWidget(redo_button)
-    undo_redo_container.setLayout(undo_redo_layout)
+    undo_redo_container = hbox(undo_button, redo_button)
 
-    reimagine_button = QPushButton('Reimagine')
-    inpaint_button = QPushButton('Inpaint')
+    box_size_limit_checkbox = QCheckBox()
+    box_size_limit_checkbox.setChecked(True)
+    swap_buttons_checkbox = QCheckBox()
+    swap_buttons_checkbox.setChecked(False)
+    brush_select_widget, brush_selector  = create_select_widget('Brush', brush_options)
+    box_size_limit_container = hbox(
+        ('Should limit box size', box_size_limit_checkbox),
+        ('Paint using left click', swap_buttons_checkbox),
+        brush_select_widget)
+
+    fill_button = QPushButton('Autofill')
 
     prompt_textarea = QLineEdit()
     prompt_textarea.setPlaceholderText('Prompt')
@@ -1242,12 +1201,25 @@ if __name__ == '__main__':
     modifiers_textarea.setPlaceholderText('Modifiers')
     modifiers_save_button = QPushButton('Save Modifiers')
     modifiers_load_button = QPushButton('Load Modifiers')
-    modifiers_container = QWidget()
-    modifiers_layout = QHBoxLayout()
-    modifiers_layout.addWidget(modifiers_textarea)
-    modifiers_layout.addWidget(modifiers_save_button)
-    modifiers_layout.addWidget(modifiers_load_button)
-    modifiers_container.setLayout(modifiers_layout)
+    modifiers_container = hbox(modifiers_textarea, modifiers_save_button, modifiers_load_button)
+
+    seed_text = QLineEdit()
+    seed_text.setText('-1')
+    seed_random_button = QPushButton('🎲')
+    seed_reset_button = QPushButton('↺')
+    seed_container = hbox(('Seed', seed_text), seed_random_button, seed_reset_button)
+
+    def random_seed_buton_handler():
+        seed_text.setText(str(random.randint(0, 1000000)))
+
+
+    generate_button = QPushButton('Generate')
+    reimagine_button = QPushButton('Reimagine')
+    inpaint_button = QPushButton('Inpaint')
+    generate_button.setStyleSheet('QPushButton {background: green; color: white;}')
+    inpaint_button.setStyleSheet('QPushButton {background: green; color: white;}')
+    reimagine_button.setStyleSheet('QPushButton {background: green; color: white;}')
+
 
     def handle_save_modifiers():
         mods = modifiers_textarea.text()
@@ -1258,31 +1230,17 @@ if __name__ == '__main__':
         if mods:
             modifiers_textarea.setText(mods)
 
-    modifiers_save_button.clicked.connect(handle_save_modifiers)
-    modifiers_load_button.clicked.connect(handle_load_modifiers)
 
-    generate_button = QPushButton('Generate')
-    save_container = QWidget()
-    save_layout = QHBoxLayout()
     quicksave_button = QPushButton('Quick Save')
     quickload_button = QPushButton('Quick Load')
-    save_layout.addWidget(quicksave_button)
-    save_layout.addWidget(quickload_button)
-    save_container.setLayout(save_layout)
+    save_container = hbox(quicksave_button, quickload_button)
 
-    generate_button.setStyleSheet('QPushButton {background: green; color: white;}')
-    inpaint_button.setStyleSheet('QPushButton {background: green; color: white;}')
-    reimagine_button.setStyleSheet('QPushButton {background: green; color: white;}')
-
-
-    scratchpad_container = QWidget()
-    scratchpad_layout = QHBoxLayout()
     show_scratchpad_button = QPushButton('Show Scratchpad')
     paste_scratchpad_button = QPushButton('Paste From Scratchpad')
-    scratchpad_layout.addWidget(show_scratchpad_button)
-    scratchpad_layout.addWidget(paste_scratchpad_button)
-    scratchpad_container.setLayout(scratchpad_layout)
+    scratchpad_container = hbox(show_scratchpad_button, paste_scratchpad_button)
+
     export_button = QPushButton('Export')
+
     widget = PaintWidget(prompt_textarea, modifiers_textarea, stbale_diffusion_manager)
     scratchpad = PaintWidget(prompt_textarea, modifiers_textarea, stbale_diffusion_manager)
 
@@ -1335,24 +1293,15 @@ if __name__ == '__main__':
         select_callback=inpaint_change_callback)
 
     smooth_inpaint_checkbox = QCheckBox('Smooth Inpaint')
-    inpaint_container = QWidget()
-    inpaint_layout = QHBoxLayout()
-    inpaint_layout.addWidget(inpaint_selector_container)
-    inpaint_layout.addWidget(smooth_inpaint_checkbox)
-    inpaint_layout.addWidget(inpaint_button)
-    inpaint_container.setLayout(inpaint_layout)
+    inpaint_container = hbox(inpaint_selector_container, smooth_inpaint_checkbox, inpaint_button)
 
-    support_container = QWidget()
-    support_layout = QHBoxLayout()
     coffee_button = QPushButton('Buy me a coffee')
     github_button = QPushButton()
     twitter_button = QPushButton()
     github_button.setIcon(github_icon)
     twitter_button.setIcon(twitter_icon)
-    support_layout.addWidget(coffee_button)
-    support_layout.addWidget(github_button)
-    support_layout.addWidget(twitter_button)
-    support_container.setLayout(support_layout)
+
+    support_container = hbox(coffee_button, github_button, twitter_button)
 
     def runtime_change_callback(num):
         if runtime_options[num] == 'local':
@@ -1363,15 +1312,10 @@ if __name__ == '__main__':
     runtime_options = ['local', 'server']
     runtime_select_container, runtime_select_widget = create_select_widget('Runtime', runtime_options, select_callback=runtime_change_callback)
     
-    server_container = QWidget()
-    server_layout = QHBoxLayout()
     server_address_widget = QLineEdit()
     open_colab_widget = QPushButton('Open Colab Notebook')
-    server_layout.addWidget(server_address_widget)
-    server_layout.addWidget(open_colab_widget)
-    server_container.setLayout(server_layout)
+    server_container = hbox(server_address_widget, open_colab_widget)
 
-    open_colab_widget.clicked.connect(handle_colab_button)
 
     stbale_diffusion_manager.mode_widget = runtime_select_widget
     stbale_diffusion_manager.huggingface_token_widget = huggingface_token_text_field
@@ -1383,29 +1327,10 @@ if __name__ == '__main__':
 
     server_address_widget.setText('http://127.0.0.1:5000')
 
-    brush_options = ['square', 'circle']
     def brush_select_callback(num):
         option = brush_options[num]
         widget.brush = option
         scratchpad.brush = option
-
-
-    box_size_limit_container = QWidget()
-    box_size_limit_label = QLabel('Should limit box size')
-    box_size_limit_checkbox = QCheckBox()
-    box_size_limit_checkbox.setChecked(True)
-    box_size_limit_layout = QHBoxLayout()
-    swap_buttons_label = QLabel('Paint using left click')
-    swap_buttons_checkbox = QCheckBox()
-    brush_select_widget, _  = create_select_widget('Brush', brush_options, brush_select_callback)
-    swap_buttons_checkbox.setChecked(False)
-    box_size_limit_layout.addWidget(box_size_limit_label)
-    box_size_limit_layout.addWidget(box_size_limit_checkbox)
-    box_size_limit_layout.addWidget(swap_buttons_label)
-    box_size_limit_layout.addWidget(swap_buttons_checkbox)
-    box_size_limit_layout.addWidget(brush_select_widget)
-
-    box_size_limit_container.setLayout(box_size_limit_layout)
 
     def box_size_limit_callback(state):
         if state == Qt.Checked:
@@ -1430,19 +1355,10 @@ if __name__ == '__main__':
     def handle_autofill():
         widget.handle_autofill()
 
-    fill_button = QPushButton('Autofill')
-    fill_button.clicked.connect(handle_autofill)
 
-    mask_control_container = QWidget()
-    mask_control_layout = QHBoxLayout()
-
-    mask_container_label = QLabel('Advanced Inpainting Mask')
     save_mask_button = QPushButton('Save Mask')
     forget_mask_button = QPushButton('Forget Mask')
-    mask_control_layout.addWidget(mask_container_label)
-    mask_control_layout.addWidget(save_mask_button)
-    mask_control_layout.addWidget(forget_mask_button)
-    mask_control_container.setLayout(mask_control_layout)
+    mask_control_container = hbox(('Advanced Inpainting Mask', save_mask_button), forget_mask_button)
 
     scroll_area = QScrollArea()
 
@@ -1504,6 +1420,13 @@ if __name__ == '__main__':
     github_button.clicked.connect(lambda : handle_github_button())
     save_mask_button.clicked.connect(lambda : widget.handle_save_mask())
     forget_mask_button.clicked.connect(lambda : widget.handle_forget_mask())
+    huggingface_token_open_button.clicked.connect(handle_huggingface_button)
+    brush_selector.activated.connect(brush_select_callback)
+    fill_button.clicked.connect(handle_autofill)
+    modifiers_save_button.clicked.connect(handle_save_modifiers)
+    modifiers_load_button.clicked.connect(handle_load_modifiers)
+    seed_random_button.clicked.connect(random_seed_buton_handler)
+    open_colab_widget.clicked.connect(handle_colab_button)
 
     widget.color_pushbutton = select_color_button
     widget.paint_checkbox = swap_buttons_checkbox
@@ -1520,11 +1443,13 @@ if __name__ == '__main__':
     seed_text.textChanged.connect(seed_change_function)
     seed_reset_button.clicked.connect(lambda : seed_text.setText('-1'))
 
+    initial_texture = get_texture()
+
     widget.setWindowTitle('UnstableFusion')
     scratchpad.setWindowTitle('Scratchpad')
     tools_widget.setWindowTitle('Tools')
-    widget.set_np_image(testtexture)
-    scratchpad.set_np_image(testtexture)
+    widget.set_np_image(initial_texture)
+    scratchpad.set_np_image(initial_texture)
     widget.resize_to_image()
     widget.show()
     # tools_widget.show()
