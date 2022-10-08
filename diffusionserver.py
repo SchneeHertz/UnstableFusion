@@ -25,17 +25,9 @@ dummy_safety_checker = lambda images, **kwargs: (images, [False] * len(images))
 class StableDiffusionHandler:
     def __init__(self, token=True):
         self.text2img = StableDiffusionPipeline.from_pretrained(
-        "hakurei/waifu-diffusion",
-            revision="fp16",
-            torch_dtype=torch.float16,
-            scheduler=DDIMScheduler(
-                beta_start=0.00085,
-                beta_end=0.012,
-                beta_schedule="scaled_linear",
-                clip_sample=False,
-                set_alpha_to_one=False,
-            ),
-            use_auth_token=token).to("cuda")
+            "hakurei/waifu-diffusion",
+            torch_dtype=torch.float32
+        ).to("cuda")
 
         # self.text2img.safety_checker = dummy_safety_checker
 
