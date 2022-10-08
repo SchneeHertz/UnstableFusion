@@ -26,7 +26,8 @@ class StableDiffusionHandler:
     def __init__(self, token=True):
         self.text2img = StableDiffusionPipeline.from_pretrained(
             "hakurei/waifu-diffusion",
-            torch_dtype=torch.float32
+            revision="fp16",
+            torch_dtype=torch.float16,
         ).to("cuda")
 
         # self.text2img.safety_checker = dummy_safety_checker
